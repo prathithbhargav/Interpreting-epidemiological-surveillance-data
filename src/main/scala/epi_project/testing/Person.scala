@@ -37,7 +37,8 @@ case class Person(id: Long,
                   deadCount:Int = 0,
                   deathDay:Int = 0,
                   dayAtWhichPersonIsInfected:Int = -20,
-                  dayAtWhichPersonIsIdentified:Int = -30) extends StatefulAgent {
+                  dayAtWhichPersonIsIdentified:Int = -30,
+                  ) extends StatefulAgent {
 
 
   private val incrementInfectionDay: Context => Unit = (context: Context) => {
