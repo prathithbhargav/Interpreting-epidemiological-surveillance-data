@@ -1,0 +1,172 @@
+package epi_project.testing.DiseaseState
+
+import scala.collection.mutable.ListBuffer
+import com.bharatsim.engine.Context
+import com.bharatsim.engine.basicConversions.decoders.DefaultDecoders._
+import com.bharatsim.engine.basicConversions.encoders.DefaultEncoders._
+import com.bharatsim.engine.fsm.State
+import com.bharatsim.engine.graph.patternMatcher.MatchCondition._
+import com.bharatsim.engine.models.{Node, StatefulAgent}
+import com.bharatsim.engine.utils.Probability.biasedCoinToss
+import epi_project.testing.InfectionStatus._
+import epi_project.testing._
+
+
+case class SusceptibleState(toBeAsymptomatic:Boolean) extends State {
+
+  override def enterAction(context: Context, agent: StatefulAgent): Unit = {
+    agent.updateParam("infectionState",Susceptible)
+  }
+
+  var leavingSusceptible:Boolean = false
+
+  override def perTickAction(context: Context, agent: StatefulAgent): Unit = {
+    leavingSusceptible = shouldBeInfected(context,agent)
+  }
+
+
+  def shouldBeInfected(context: Context,agent: StatefulAgent):Boolean = {
+    val schedule = context.fetchScheduleFor(agent).get
+
+    val currentStep = context.getCurrentStep
+    val placeType: String = schedule.getForStep(currentStep)
+
+//    if (placeType == "Hospital"){
+//      println("Location is Hospital", agent.asInstanceOf[Person].infectionState,
+//        agent.asInstanceOf[Person].essentialWorker)
+//    }
+    val places = agent.getConnections(agent.getRelation(placeType).get).toList
+    if (places.nonEmpty) {
+      val place = places.head
+      val decodedPlace = agent.asInstanceOf[Person].decodeNode(placeType, place)
+
+      val InfectedFraction: Double = fetchInfectedFraction(decodedPlace, placeType, context)
+      val ExposureProb: Double = Disease.lambdaS * Disease.dt * InfectedFraction
+      val InfectionState = biasedCoinToss(ExposureProb)
+      if (InfectionState) {
+        fetchInfectingAgent(decodedPlace, placeType, context) match {
+          case Some(infecting_agent) =>
+            agent.updateParam("infectingAgent", infecting_agent.id)
+            infecting_agent.updateParam("agentsInfected", infecting_agent.agentsInfected + 1)
+            agent.updateParam("infectedAt", placeType)
+          case None =>
+            println(s"Warning: No infecting agent found at $placeType during infection event.")
+        }
+      }
+      // if (InfectionState) {
+      //   val infecting_agent = fetchInfectingAgent(decodedPlace, placeType, context)
+      //   agent.updateParam("infectingAgent", infecting_agent.id)
+      //   infecting_agent.updateParam("agentsInfected", infecting_agent.agentsInfected + 1)
+      //   agent.updateParam("infectedAt", placeType)
+      // }
+      
+      return InfectionState
+    }
+    false
+
+  }
+
+
+//  def isAsymptomatic(context: Context,agent: StatefulAgent):Boolean = {
+//    if (biasedCoinToss(Disease.gamma)){
+//      return true
+//    }
+//    false
+//  }
+
+  def goToAsymptomatic(context: Context,agent: StatefulAgent):Boolean = leavingSusceptible && toBeAsymptomatic
+  def goToPresymptomatic(context: Context,agent: StatefulAgent):Boolean = leavingSusceptible && !toBeAsymptomatic
+
+
+
+
+
+  def fetchInfectedFraction(node: Node,placeType: String, context: Context): Double = {
+
+    val cache = context.perTickCache
+    val key = (placeType, node.internalId)
+
+    cache.getOrUpdate(key,() => calculateInfectedFraction(node, placeType,context)).asInstanceOf[Double]
+  }
+
+
+  def calculateInfectedFraction(node: Node,placeType : String, context: Context): Double = {
+
+    //val total = node.getConnectionCount(node.getRelation[Person]().get, "currentLocation" equ placeType)
+
+    val sus_or_rec = node.getConnectionCount(node.getRelation[Person]().get,("currentLocation" equ placeType ) and  (("infectionState" equ Susceptible) or ("infectionState" equ Recovered)))
+
+    val hos = node.getConnectionCount(node.getRelation[Person]().get, ("infectionState" equ Hospitalized) and ("currentLocation" equ placeType ))
+
+    val infected = node.getConnectionCount(node.getRelation[Person]().get, (("infectionState" equ Asymptomatic) or ("infectionState" equ Presymptomatic) or ("infectionState" equ MildlyInfected) or ("infectionState" equ SeverelyInfected)) and ("currentLocation" equ placeType))
+      //node.getConnectionCount(node.getRelation[Person]().get, "infectionState" equ Presymptomatic)+ node.getConnectionCount(node.getRelation[Person]().get, "infectionState" equ MildlyInfected) + node.getConnectionCount(node.getRelation[Person]().get, "infectionState" equ SeverelyInfected) + node.getConnectionCount(node.getRelation[Person]().get, "infectionState" equ Hospitalized)
+
+    val infected_and_quarantined: Double = node.getConnectionCount(node.getRelation[Person]().get,("currentLocation" equ placeType) and ("beingTested" equ 2))
+
+    val contact_traced_and_quarantined_to_be_tested: Double = node.getConnectionCount(node.getRelation[Person]().get,("currentLocation" equ placeType) and ("beingTested" equ 3))
+
+    val contact_traced_and_quarantined_not_to_be_tested: Double = node.getConnectionCount(node.getRelation[Person]().get,("currentLocation" equ placeType) and ("beingTested" equ 4))
+    val totalCount:Double = sus_or_rec + infected + Disease.contactProbability*hos
+
+    val infectedCount:Double = (infected - infected_and_quarantined - contact_traced_and_quarantined_not_to_be_tested - contact_traced_and_quarantined_to_be_tested) + Disease.contactProbability*hos +
+      Disease.contactProbability*infected_and_quarantined + Disease.contactProbability*contact_traced_and_quarantined_not_to_be_tested + Disease.contactProbability*contact_traced_and_quarantined_to_be_tested
+    //TODO: account for quarantined
+
+    infectedCount/totalCount
+
+  }
+
+  // private def fetchInfectingAgent(node: Node, placeType: String, context: Context):Any = {
+  //   val cache = context.perTickCache
+
+  //   val tuple = ("InfectingAgentsAt" + placeType, node.internalId) // this is a Bharatsim thing
+  //   val infectedHereList = cache.getOrUpdate(tuple, () => fetchInfectingAgentsFromStore(node, placeType)).asInstanceOf[List[Person]]
+
+  //   if (infectedHereList.nonEmpty) {
+  //     val infectingAgent = infectedHereList(Disease.splittableRandom.nextInt(infectedHereList.size))
+  //     return infectingAgent
+  //   }
+  //   return ""
+  
+  //   // infectingAgent
+  // } this is the old kind of code that I used
+
+  private def fetchInfectingAgent(node: Node, placeType: String, context: Context): Option[Person] = {
+  val cache = context.perTickCache
+  val tuple = ("InfectingAgentsAt" + placeType, node.internalId)
+  val infectedHereList = cache.getOrUpdate(tuple, () => fetchInfectingAgentsFromStore(node, placeType)).asInstanceOf[List[Person]]
+
+  if (infectedHereList.nonEmpty) {
+    val infectingAgent = infectedHereList(Disease.splittableRandom.nextInt(infectedHereList.size))
+    Some(infectingAgent)
+  } else {
+    None
+  }
+}
+
+
+  private def fetchInfectingAgentsFromStore(node: Node, placeType: String): List[Person] = {
+    val peopleHere = node.getConnections(node.getRelation[Person]().get)
+    val infectedHere = new ListBuffer[Person]()
+
+    peopleHere.foreach(node => {
+      val person = node.as[Person]
+      if (person.isInfected && person.currentLocation == placeType) {
+        infectedHere += person
+      }
+    })
+    infectedHere.toList
+  }
+
+
+  addTransition(
+    when = goToAsymptomatic,
+      to = AsymptomaticState()
+  )
+
+  addTransition(
+    when = goToPresymptomatic,
+    to = agent => PresymptomaticState(toBeSeverelyInfected = 1- Disease.delta)
+  )
+}
+
