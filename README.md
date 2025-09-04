@@ -14,7 +14,7 @@ https://bharatsim.readthedocs.io/en/latest/setup.html
  
 ## Data
 
-- all data for the manuscript is present in the simulation_data folder. Each testing and public health response scenario is present in a different folder.
+- all data for the manuscript is available in this tar arxiv (Google Drive Link - https://drive.google.com/drive/folders/1Vh753yBji3Dq-Vf284zO8-xKyc1ezSLy?usp=sharing). 
 - Contact tracing data from Pune city, used to calculate the summary data, gathered by the Pune Knowledge Cluster is available on https://www.pkc.org.in/pkc-focus-area/health/covid-19-pune-clinical-database/
 ## Information on the directories
 
@@ -226,6 +226,7 @@ Once testing is done, the following flags are updated:-
 [comment]: <> (  recover or die.)
 
 [comment]: <> (- Dead people are buried in a cemetery.)
+
 
 
 
